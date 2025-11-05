@@ -27,11 +27,24 @@ pipeline {
                 script {
                     sh '''
                     echo "Installation et exécution des hooks de sécurité (pre-commit)..."
+
+                    # S'assurer que le module venv est disponible (utile dans Vagrant/Debian)
+                    if ! dpkg -s python3-venv >/dev/null 2>&1; then
+                        echo "Installation du module python3-venv..."
+                        sudo apt update && sudo apt install -y python3-venv python3-pip
+                    fi
+
+                    # Supprimer toute configuration Git globale des hooks
+                    git config --unset-all core.hooksPath || true
+
+                    # Installer pre-commit si non présent
                     if ! command -v pre-commit &> /dev/null; then
                         python3 -m venv venv
                         . venv/bin/activate
                         pip install pre-commit
                     fi
+
+                    # Installer et exécuter les hooks
                     pre-commit install
                     pre-commit run --all-files
                     '''
@@ -119,6 +132,7 @@ pipeline {
                 }
             }
         }
-    } 
+    }
 
-} 
+    
+}
