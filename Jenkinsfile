@@ -89,22 +89,43 @@ pipeline {
         }
 
         /*************** 6. SECRETS SCAN - GITLEAKS ***************/
-       stage('Secrets Scan - Gitleaks') {
+      stage('Secrets Scan - Gitleaks') {
     steps {
         script {
             sh '''
             echo "Téléchargement et exécution de Gitleaks..."
+
+            # Télécharger et extraire Gitleaks s'il n'existe pas déjà
             if [ ! -f ./gitleaks ]; then
+                echo "Téléchargement de Gitleaks v8.18.4..."
                 wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz -O gitleaks.tar.gz
+
+                echo "Extraction de Gitleaks..."
                 tar -xzf gitleaks.tar.gz
-                chmod +x gitleaks
+
+                # Vérifie si le binaire existe après extraction
+                if [ -f ./gitleaks ]; then
+                    chmod +x gitleaks
+                elif [ -f ./gitleaks_8.18.4_linux_x64/gitleaks ]; then
+                    mv ./gitleaks_8.18.4_linux_x64/gitleaks .
+                    chmod +x gitleaks
+                else
+                    echo "ERREUR: Le binaire Gitleaks n'a pas été trouvé après extraction."
+                    exit 1
+                fi
             fi
+
+            echo "Vérification de la version de Gitleaks..."
+            ./gitleaks version || { echo "ERREUR: Gitleaks n'est pas exécutable."; exit 1; }
+
+            echo "Analyse des secrets avec Gitleaks..."
             ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
+
+            echo "Rapport Gitleaks généré : gitleaks-report.json"
             '''
         }
     }
 }
-
 
         /*************** 7. DOCKER IMAGE BUILD & SCAN ***************/
         stage('Docker Build & Scan') {
