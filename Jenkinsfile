@@ -129,32 +129,34 @@ pipeline {
         }
 
         /*************** 7. DOCKER IMAGE BUILD & SCAN ***************/
-        stage('Docker Build & Scan') {
-            steps {
-                script {
-                    sh '''
-                    echo "Construction de l'image Docker..."
-                    docker build -t devsecops-app .
+       stage('Docker Build & Scan') {
+    steps {
+        script {
+            sh '''
+            echo "Construction de l'image Docker..."
+            docker build -t devsecops-app .
 
-                    echo "Scan de l'image avec Trivy..."
-                    if ! command -v trivy &> /dev/null; then
-                        echo "Installation de Trivy..."
-                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
-                        chmod +x ./bin/trivy
-                    fi
+            echo "Scan de l'image avec Trivy..."
+            if ! command -v trivy &> /dev/null; then
+                echo "Installation de Trivy..."
+                curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+                chmod +x ./bin/trivy
+            fi
 
-                    echo "Exécution du scan avec Trivy..."
-                    ./bin/trivy image --exit-code 0 \
-                        --severity MEDIUM,HIGH,CRITICAL \
-                        --format json \
-                        --output trivy-report.json \
-                        devsecops-app
+            echo "Exécution du scan avec Trivy (avec timeout augmenté)..."
+            ./bin/trivy image --timeout 20m \
+                --exit-code 0 \
+                --severity MEDIUM,HIGH,CRITICAL \
+                --format json \
+                --output trivy-report.json \
+                devsecops-app
 
-                    echo "Rapport Trivy généré : trivy-report.json"
-                    '''
-                }
-            }
+            echo "Rapport Trivy généré : trivy-report.json"
+            '''
         }
+    }
+}
+
 
         /*************** 8. DAST - SCAN AVEC OWASP ZAP ***************/
         stage('DAST - OWASP ZAP Scan') {
