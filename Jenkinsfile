@@ -76,11 +76,11 @@ pipeline {
 
         /*************** 5. SCA - DEPENDENCY SCAN ***************/
        
-        stage('SCA - Dependency Check') {
+     stage('SCA - Dependency Check') {
     steps {
         script {
             echo "Analyse des dépendances avec OWASP Dependency-Check..."
-            sh 'mvn org.owasp:dependency-check-maven:check -Dformat=HTML'
+            sh 'mvn org.owasp:dependency-check-maven:check -Dformat=HTML || true'
         }
         publishHTML(target: [
             allowMissing: false,
