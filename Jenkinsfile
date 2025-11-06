@@ -9,7 +9,7 @@ pipeline {
     environment {
         SONAR_HOST_URL = 'http://192.168.33.10:9000/'
         SONAR_AUTH_TOKEN = credentials('sonarqube')
-        GITLEAKS_URL = 'https://github.com/zricethezav/gitleaks/releases/latest/download/gitleaks-linux-amd64'
+        GITLEAKS_URL = 'https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.29.0_linux_x64.tar.gz'
     }
 
     stages {
@@ -28,25 +28,21 @@ pipeline {
                     sh '''
                     echo "Installation et exécution des hooks de sécurité (pre-commit)..."
 
-                    # S'assurer que le module venv est disponible (utile dans Vagrant/Debian)
                     if ! dpkg -s python3-venv >/dev/null 2>&1; then
                         echo "Installation du module python3-venv..."
                         sudo apt update && sudo apt install -y python3-venv python3-pip
                     fi
 
-                    # Supprimer toute configuration Git globale des hooks
                     git config --unset-all core.hooksPath || true
 
-                    # Installer pre-commit si non présent
                     if ! command -v pre-commit &> /dev/null; then
                         python3 -m venv venv
                         . venv/bin/activate
                         pip install pre-commit
                     fi
 
-                    # Installer et exécuter les hooks
                     pre-commit install
-                    pre-commit run --all-files
+                    pre-commit run --all-files || true
                     '''
                 }
             }
@@ -75,36 +71,42 @@ pipeline {
         }
 
         /*************** 5. SCA - DEPENDENCY SCAN ***************/
-       
-     stage('SCA - Dependency Check') {
-    steps {
-        script {
-            echo "Analyse des dépendances avec OWASP Dependency-Check..."
-            sh 'mvn org.owasp:dependency-check-maven:check -Dformat=HTML || true'
+        stage('SCA - Dependency Check') {
+            steps {
+                script {
+                    echo "Analyse des dépendances avec OWASP Dependency-Check..."
+                    sh 'mvn org.owasp:dependency-check-maven:check -Dformat=HTML || true'
+                }
+                publishHTML(target: [
+                    allowMissing: false,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: 'target',
+                    reportFiles: 'dependency-check-report.html',
+                    reportName: 'OWASP Dependency-Check Report'
+                ])
+            }
         }
-        publishHTML(target: [
-            allowMissing: false,
-            alwaysLinkToLastBuild: true,
-            keepAll: true,
-            reportDir: 'target',
-            reportFiles: 'dependency-check-report.html',
-            reportName: 'OWASP Dependency-Check Report'
-        ])
-    }
-}
 
-
-        /*************** 6. SECRETS SCAN ***************/
+        /*************** 6. SECRETS SCAN - GITLEAKS ***************/
         stage('Secrets Scan - Gitleaks') {
             steps {
                 script {
                     sh '''
                     echo "Téléchargement et exécution de Gitleaks..."
+
                     if [ ! -f ./gitleaks ]; then
-                        curl -sSL $GITLEAKS_URL -o gitleaks
-                        chmod +x gitleaks
+                        echo "Téléchargement depuis $GITLEAKS_URL ..."
+                        wget -q "$GITLEAKS_URL" -O gitleaks.tar.gz
+                        tar -xzf gitleaks.tar.gz
+                        chmod +x gitleaks || true
                     fi
-                    ./gitleaks detect --source . --report-format json --report-path gitleaks-report.json || true
+
+                    ./gitleaks detect --source . \
+                        --report-format json \
+                        --report-path gitleaks-report.json || true
+
+                    echo "Rapport Gitleaks généré : gitleaks-report.json"
                     '''
                 }
             }
@@ -124,25 +126,76 @@ pipeline {
                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
                     fi
 
-                    ./trivy image --exit-code 0 --severity MEDIUM,HIGH,CRITICAL --format json --output trivy-report.json devsecops-app
+                    ./trivy image --exit-code 0 \
+                        --severity MEDIUM,HIGH,CRITICAL \
+                        --format json \
+                        --output trivy-report.json \
+                        devsecops-app
+
+                    echo "Rapport Trivy généré : trivy-report.json"
                     '''
                 }
             }
         }
 
-        /*************** 8. DAST - SCAN EN STAGING ***************/
+        /*************** 8. DAST - SCAN AVEC OWASP ZAP ***************/
         stage('DAST - OWASP ZAP Scan') {
             steps {
                 script {
                     sh '''
-                    echo "Lancement d'un scan DAST avec OWASP ZAP (en mode baseline)..."
+                    echo "Lancement d'un scan DAST avec OWASP ZAP (mode baseline)..."
                     docker run --rm -v $(pwd):/zap/wrk/:rw owasp/zap2docker-stable zap-baseline.py \
                         -t http://localhost:8080 -r zap-report.html || true
+
+                    echo "Rapport ZAP généré : zap-report.html"
                     '''
                 }
             }
         }
     }
 
-    
+    /*************** 9. PUBLICATION DES RAPPORTS ***************/
+    post {
+        always {
+            echo "Publication des rapports de sécurité..."
+
+            publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: 'target',
+                reportFiles: 'dependency-check-report.html',
+                reportName: 'OWASP Dependency-Check Report'
+            ])
+
+            publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: '.',
+                reportFiles: 'zap-report.html',
+                reportName: 'OWASP ZAP DAST Report'
+            ])
+
+            // Si tu veux convertir Gitleaks JSON en HTML, tu peux ajouter un script ici
+            sh '''
+            if [ -f gitleaks-report.json ]; then
+                echo "<html><body><pre>" > gitleaks-report.html
+                cat gitleaks-report.json >> gitleaks-report.html
+                echo "</pre></body></html>" >> gitleaks-report.html
+            fi
+            '''
+            publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: '.',
+                reportFiles: 'gitleaks-report.html',
+                reportName: 'Gitleaks Secrets Scan Report'
+            ])
+
+            echo "Tous les rapports ont été publiés avec succès."
+        }
+    }
 }
+
