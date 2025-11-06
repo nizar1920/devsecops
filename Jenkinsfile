@@ -89,39 +89,47 @@ pipeline {
         }
 
         /*************** 6. SECRETS SCAN - GITLEAKS ***************/
-      stage('Secrets Scan - Gitleaks') {
+     stage('Secrets Scan - Gitleaks') {
     steps {
         script {
             sh '''
             echo "Téléchargement et exécution de Gitleaks..."
 
-            # Télécharger et extraire Gitleaks s'il n'existe pas déjà
-            if [ ! -f ./gitleaks ]; then
-                echo "Téléchargement de Gitleaks v8.18.4..."
-                wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz -O gitleaks.tar.gz
+            # Supprime toute ancienne version
+            rm -f gitleaks gitleaks.tar.gz
 
-                echo "Extraction de Gitleaks..."
-                tar -xzf gitleaks.tar.gz
+            # Téléchargement fiable de Gitleaks v8.18.4
+            echo "Téléchargement de Gitleaks depuis GitHub..."
+            curl -L -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz
 
-                # Vérifie si le binaire existe après extraction
-                if [ -f ./gitleaks ]; then
-                    chmod +x gitleaks
-                elif [ -f ./gitleaks_8.18.4_linux_x64/gitleaks ]; then
-                    mv ./gitleaks_8.18.4_linux_x64/gitleaks .
-                    chmod +x gitleaks
-                else
-                    echo "ERREUR: Le binaire Gitleaks n'a pas été trouvé après extraction."
-                    exit 1
-                fi
+            # Vérifie que le fichier est bien un tar.gz
+            if ! file gitleaks.tar.gz | grep -q "gzip compressed data"; then
+                echo "ERREUR: le fichier téléchargé n'est pas un binaire valide (probable 404 HTML)."
+                cat gitleaks.tar.gz | head -n 20
+                exit 1
             fi
 
-            echo "Vérification de la version de Gitleaks..."
-            ./gitleaks version || { echo "ERREUR: Gitleaks n'est pas exécutable."; exit 1; }
+            echo "Extraction de Gitleaks..."
+            tar -xzf gitleaks.tar.gz
+
+            # Trouve le binaire (dossier ou racine)
+            if [ -f ./gitleaks ]; then
+                chmod +x gitleaks
+            elif [ -f ./gitleaks_8.18.4_linux_x64/gitleaks ]; then
+                mv ./gitleaks_8.18.4_linux_x64/gitleaks .
+                chmod +x gitleaks
+            else
+                echo "ERREUR: binaire gitleaks introuvable après extraction."
+                exit 1
+            fi
+
+            echo "Vérification de la version..."
+            ./gitleaks version
 
             echo "Analyse des secrets avec Gitleaks..."
             ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
 
-            echo "Rapport Gitleaks généré : gitleaks-report.json"
+            echo "✅ Rapport Gitleaks généré : gitleaks-report.json"
             '''
         }
     }
@@ -170,47 +178,60 @@ pipeline {
     }
 
     /*************** 9. PUBLICATION DES RAPPORTS ***************/
-    post {
-        always {
-            echo "Publication des rapports de sécurité..."
+   post {
+    always {
+        echo "📦 Publication des rapports de sécurité..."
 
-            publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'target',
-                reportFiles: 'dependency-check-report.html',
-                reportName: 'OWASP Dependency-Check Report'
-            ])
+        // 🔹 1. Rapport OWASP Dependency-Check (SCA)
+        publishHTML(target: [
+            allowMissing: true,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: 'target',
+            reportFiles: 'dependency-check-report.html',
+            reportName: 'OWASP Dependency-Check Report'
+        ])
 
-            publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: '.',
-                reportFiles: 'zap-report.html',
-                reportName: 'OWASP ZAP DAST Report'
-            ])
+        // 🔹 2. Rapport OWASP ZAP (DAST)
+        publishHTML(target: [
+            allowMissing: true,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: '.',
+            reportFiles: 'zap-report.html',
+            reportName: 'OWASP ZAP DAST Report'
+        ])
 
-            // Si tu veux convertir Gitleaks JSON en HTML, tu peux ajouter un script ici
+        // 🔹 3. Conversion et publication du rapport Gitleaks
+        script {
             sh '''
             if [ -f gitleaks-report.json ]; then
-                echo "<html><body><pre>" > gitleaks-report.html
-                cat gitleaks-report.json >> gitleaks-report.html
-                echo "</pre></body></html>" >> gitleaks-report.html
+                echo "🧩 Conversion du rapport Gitleaks JSON -> HTML..."
+                {
+                    echo "<html><head><title>Gitleaks Secrets Scan Report</title>"
+                    echo "<style>body { font-family: monospace; white-space: pre-wrap; background: #f9f9f9; padding: 20px; }</style>"
+                    echo "</head><body><h2>Rapport Gitleaks</h2><hr><pre>"
+                    jq . gitleaks-report.json || cat gitleaks-report.json
+                    echo "</pre></body></html>"
+                } > gitleaks-report.html
+            else
+                echo "⚠️ Aucun rapport Gitleaks trouvé, skip."
             fi
             '''
-            publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: '.',
-                reportFiles: 'gitleaks-report.html',
-                reportName: 'Gitleaks Secrets Scan Report'
-            ])
-
-            echo "Tous les rapports ont été publiés avec succès."
         }
+
+        publishHTML(target: [
+            allowMissing: true,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: '.',
+            reportFiles: 'gitleaks-report.html',
+            reportName: 'Gitleaks Secrets Scan Report'
+        ])
+
+        echo "✅ Tous les rapports de sécurité ont été publiés avec succès."
     }
+}
+
 }
 
