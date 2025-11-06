@@ -9,7 +9,7 @@ pipeline {
     environment {
         SONAR_HOST_URL = 'http://192.168.33.10:9000/'
         SONAR_AUTH_TOKEN = credentials('sonarqube')
-        GITLEAKS_URL = 'https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.29.0_linux_x64.tar.gz'
+        GITLEAKS_URL = 'https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz'
     }
 
     stages {
@@ -89,51 +89,44 @@ pipeline {
         }
 
         /*************** 6. SECRETS SCAN - GITLEAKS ***************/
-     stage('Secrets Scan - Gitleaks') {
-    steps {
-        script {
-            sh '''
-            echo "Téléchargement et exécution de Gitleaks..."
+        stage('Secrets Scan - Gitleaks') {
+            steps {
+                script {
+                    sh '''
+                    echo "Téléchargement et exécution de Gitleaks..."
 
-            # Supprime toute ancienne version
-            rm -f gitleaks gitleaks.tar.gz
+                    rm -f gitleaks gitleaks.tar.gz
 
-            # Téléchargement fiable de Gitleaks v8.18.4
-            echo "Téléchargement de Gitleaks depuis GitHub..."
-            curl -L -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz
+                    echo "Téléchargement de Gitleaks..."
+                    curl -L -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz
 
-            # Vérifie que le fichier est bien un tar.gz
-            if ! file gitleaks.tar.gz | grep -q "gzip compressed data"; then
-                echo "ERREUR: le fichier téléchargé n'est pas un binaire valide (probable 404 HTML)."
-                cat gitleaks.tar.gz | head -n 20
-                exit 1
-            fi
+                    if ! file gitleaks.tar.gz | grep -q "gzip compressed data"; then
+                        echo "ERREUR: le fichier téléchargé n'est pas valide."
+                        cat gitleaks.tar.gz | head -n 20
+                        exit 1
+                    fi
 
-            echo "Extraction de Gitleaks..."
-            tar -xzf gitleaks.tar.gz
+                    echo "Extraction de Gitleaks..."
+                    tar -xzf gitleaks.tar.gz
 
-            # Trouve le binaire (dossier ou racine)
-            if [ -f ./gitleaks ]; then
-                chmod +x gitleaks
-            elif [ -f ./gitleaks_8.18.4_linux_x64/gitleaks ]; then
-                mv ./gitleaks_8.18.4_linux_x64/gitleaks .
-                chmod +x gitleaks
-            else
-                echo "ERREUR: binaire gitleaks introuvable après extraction."
-                exit 1
-            fi
+                    if [ -f ./gitleaks ]; then
+                        chmod +x gitleaks
+                    elif [ -f ./gitleaks_8.18.4_linux_x64/gitleaks ]; then
+                        mv ./gitleaks_8.18.4_linux_x64/gitleaks .
+                        chmod +x gitleaks
+                    else
+                        echo "ERREUR: binaire gitleaks introuvable."
+                        exit 1
+                    fi
 
-            echo "Vérification de la version..."
-            ./gitleaks version
+                    ./gitleaks version
+                    ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
 
-            echo "Analyse des secrets avec Gitleaks..."
-            ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
-
-            echo "✅ Rapport Gitleaks généré : gitleaks-report.json"
-            '''
+                    echo "✅ Rapport Gitleaks généré : gitleaks-report.json"
+                    '''
+                }
+            }
         }
-    }
-}
 
         /*************** 7. DOCKER IMAGE BUILD & SCAN ***************/
         stage('Docker Build & Scan') {
@@ -147,9 +140,11 @@ pipeline {
                     if ! command -v trivy &> /dev/null; then
                         echo "Installation de Trivy..."
                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+                        chmod +x ./bin/trivy
                     fi
 
-                    ./trivy image --exit-code 0 \
+                    echo "Exécution du scan avec Trivy..."
+                    ./bin/trivy image --exit-code 0 \
                         --severity MEDIUM,HIGH,CRITICAL \
                         --format json \
                         --output trivy-report.json \
@@ -166,8 +161,9 @@ pipeline {
             steps {
                 script {
                     sh '''
-                    echo "Lancement d'un scan DAST avec OWASP ZAP (mode baseline)..."
-                    docker run --rm -v $(pwd):/zap/wrk/:rw owasp/zap2docker-stable zap-baseline.py \
+                    echo "Lancement du scan DAST OWASP ZAP..."
+                    docker run --rm -v $(pwd):/zap/wrk/:rw \
+                        owasp/zap2docker-stable zap-baseline.py \
                         -t http://localhost:8080 -r zap-report.html || true
 
                     echo "Rapport ZAP généré : zap-report.html"
@@ -178,60 +174,83 @@ pipeline {
     }
 
     /*************** 9. PUBLICATION DES RAPPORTS ***************/
-   post {
-    always {
-        echo "📦 Publication des rapports de sécurité..."
+    post {
+        always {
+            echo "📦 Publication des rapports de sécurité..."
 
-        // 🔹 1. Rapport OWASP Dependency-Check (SCA)
-        publishHTML(target: [
-            allowMissing: true,
-            alwaysLinkToLastBuild: true,
-            keepAll: true,
-            reportDir: 'target',
-            reportFiles: 'dependency-check-report.html',
-            reportName: 'OWASP Dependency-Check Report'
-        ])
+            // 1️⃣ Rapport OWASP Dependency-Check
+            publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: 'target',
+                reportFiles: 'dependency-check-report.html',
+                reportName: 'OWASP Dependency-Check Report'
+            ])
 
-        // 🔹 2. Rapport OWASP ZAP (DAST)
-        publishHTML(target: [
-            allowMissing: true,
-            alwaysLinkToLastBuild: true,
-            keepAll: true,
-            reportDir: '.',
-            reportFiles: 'zap-report.html',
-            reportName: 'OWASP ZAP DAST Report'
-        ])
+            // 2️⃣ Rapport OWASP ZAP
+            publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: '.',
+                reportFiles: 'zap-report.html',
+                reportName: 'OWASP ZAP DAST Report'
+            ])
 
-        // 🔹 3. Conversion et publication du rapport Gitleaks
-        script {
-            sh '''
-            if [ -f gitleaks-report.json ]; then
-                echo "🧩 Conversion du rapport Gitleaks JSON -> HTML..."
-                {
-                    echo "<html><head><title>Gitleaks Secrets Scan Report</title>"
-                    echo "<style>body { font-family: monospace; white-space: pre-wrap; background: #f9f9f9; padding: 20px; }</style>"
-                    echo "</head><body><h2>Rapport Gitleaks</h2><hr><pre>"
-                    jq . gitleaks-report.json || cat gitleaks-report.json
-                    echo "</pre></body></html>"
-                } > gitleaks-report.html
-            else
-                echo "⚠️ Aucun rapport Gitleaks trouvé, skip."
-            fi
-            '''
+            // 3️⃣ Rapport Gitleaks
+            script {
+                sh '''
+                if [ -f gitleaks-report.json ]; then
+                    echo "🧩 Conversion du rapport Gitleaks JSON -> HTML..."
+                    {
+                        echo "<html><head><title>Gitleaks Secrets Scan Report</title>"
+                        echo "<style>body { font-family: monospace; white-space: pre-wrap; background: #f9f9f9; padding: 20px; }</style>"
+                        echo "</head><body><h2>Rapport Gitleaks</h2><hr><pre>"
+                        jq . gitleaks-report.json || cat gitleaks-report.json
+                        echo "</pre></body></html>"
+                    } > gitleaks-report.html
+                else
+                    echo "⚠️ Aucun rapport Gitleaks trouvé, skip."
+                fi
+                '''
+            }
+
+            publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: '.',
+                reportFiles: 'gitleaks-report.html',
+                reportName: 'Gitleaks Secrets Scan Report'
+            ])
+
+            // 4️⃣ Rapport Trivy (optionnel : JSON converti en HTML)
+            script {
+                sh '''
+                if [ -f trivy-report.json ]; then
+                    echo "🧩 Conversion du rapport Trivy JSON -> HTML..."
+                    {
+                        echo "<html><head><title>Trivy Docker Image Scan Report</title>"
+                        echo "<style>body { font-family: monospace; white-space: pre-wrap; background: #eef; padding: 20px; }</style>"
+                        echo "</head><body><h2>Rapport Trivy</h2><hr><pre>"
+                        jq . trivy-report.json || cat trivy-report.json
+                        echo "</pre></body></html>"
+                    } > trivy-report.html
+                fi
+                '''
+            }
+
+            publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: '.',
+                reportFiles: 'trivy-report.html',
+                reportName: 'Trivy Docker Image Scan Report'
+            ])
+
+            echo "✅ Tous les rapports ont été publiés avec succès."
         }
-
-        publishHTML(target: [
-            allowMissing: true,
-            alwaysLinkToLastBuild: true,
-            keepAll: true,
-            reportDir: '.',
-            reportFiles: 'gitleaks-report.html',
-            reportName: 'Gitleaks Secrets Scan Report'
-        ])
-
-        echo "✅ Tous les rapports de sécurité ont été publiés avec succès."
     }
 }
-
-}
-
