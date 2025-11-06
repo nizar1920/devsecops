@@ -89,28 +89,22 @@ pipeline {
         }
 
         /*************** 6. SECRETS SCAN - GITLEAKS ***************/
-        stage('Secrets Scan - Gitleaks') {
-            steps {
-                script {
-                    sh '''
-                    echo "Téléchargement et exécution de Gitleaks..."
-
-                    if [ ! -f ./gitleaks ]; then
-                        echo "Téléchargement depuis $GITLEAKS_URL ..."
-                        wget -q "$GITLEAKS_URL" -O gitleaks.tar.gz
-                        tar -xzf gitleaks.tar.gz
-                        chmod +x gitleaks || true
-                    fi
-
-                    ./gitleaks detect --source . \
-                        --report-format json \
-                        --report-path gitleaks-report.json || true
-
-                    echo "Rapport Gitleaks généré : gitleaks-report.json"
-                    '''
-                }
-            }
+       stage('Secrets Scan - Gitleaks') {
+    steps {
+        script {
+            sh '''
+            echo "Téléchargement et exécution de Gitleaks..."
+            if [ ! -f ./gitleaks ]; then
+                wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz -O gitleaks.tar.gz
+                tar -xzf gitleaks.tar.gz
+                chmod +x gitleaks
+            fi
+            ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
+            '''
         }
+    }
+}
+
 
         /*************** 7. DOCKER IMAGE BUILD & SCAN ***************/
         stage('Docker Build & Scan') {
