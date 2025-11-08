@@ -191,6 +191,12 @@ pipeline {
         }
     }
 }
+        stage('Start Monitoring Containers') {
+            steps {
+                sh 'docker start 489d14dd8ed7'
+                sh 'docker start a8bb77026230'
+            }
+        }
 
 
         /*************** 8. DAST - SCAN AVEC OWASP ZAP ***************/
