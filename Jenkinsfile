@@ -54,6 +54,22 @@ pipeline {
                 sh 'mvn clean compile test'
             }
         }
+        stage('JaCoCo Report') {
+            steps {
+                sh 'mvn jacoco:report'
+            }
+        }
+
+        stage('JaCoCo coverage report') {
+            steps {
+                step([$class: 'JacocoPublisher',
+                      execPattern: '**/target/jacoco.exec',
+                      classPattern: '**/classes',
+                      sourcePattern: '**/src',
+                      exclusionPattern: '*/target/**/,**/*Test*,**/*_javassist/**'
+                ])
+            }
+        }
 
         /*************** 4. SAST - SCAN CODE SOURCE ***************/
         stage('SAST - SonarQube Analysis') {
@@ -125,6 +141,11 @@ pipeline {
                     echo "✅ Rapport Gitleaks généré : gitleaks-report.json"
                     '''
                 }
+            }
+        }
+         stage('Deploy to Nexus') {
+            steps {
+                sh 'mvn deploy -DskipTests -DaltDeploymentRepository=deploymentRepo::default::http://192.168.33.10:8081/repository/maven-releases/'
             }
         }
 
