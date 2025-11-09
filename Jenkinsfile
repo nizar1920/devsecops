@@ -88,22 +88,13 @@ pipeline {
         }
 
       stage('Security Scan: Nmap') {
-    steps {
-        script {
-            echo "🛡️ Starting Nmap Security Scan..."
-            sh '''
-                if ! command -v nmap &> /dev/null; then
-                    echo "🔧 Installation de Nmap..."
-                    sudo apt-get update -y
-                    sudo apt-get install -y nmap
-                fi
-
-                echo "🚀 Exécution du scan..."
-                nmap -sS -p 1-65535 -v localhost || true
-            '''
+            steps {
+                script {
+                    echo "Starting Nmap Security Scan..."
+                    sh 'sudo nmap -sS -p 1-65535 -v localhost'
+                }
+            }
         }
-    }
-}
 
 
         /*************** 5. SCA - DEPENDENCY CHECK ***************/
