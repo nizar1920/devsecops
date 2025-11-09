@@ -87,15 +87,15 @@ pipeline {
             }
         }
 
-       stage('Security Scan: Nmap') {
+      stage('Security Scan: Nmap') {
     steps {
         script {
             echo "🛡️ Starting Nmap Security Scan..."
             sh '''
                 if ! command -v nmap &> /dev/null; then
                     echo "🔧 Installation de Nmap..."
-                    apt-get update -y
-                    apt-get install -y nmap
+                    sudo apt-get update -y
+                    sudo apt-get install -y nmap
                 fi
 
                 echo "🚀 Exécution du scan..."
