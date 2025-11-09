@@ -21,7 +21,7 @@ pipeline {
             }
         }
 
-        /*************** 2. SECURITE DEVELOPPEUR (SHIFT-LEFT) ***************/
+        /*************** 2. SECURITE DEVELOPPEUR ***************/
         stage('Pre-commit Security Hooks') {
             steps {
                 script {
@@ -48,12 +48,13 @@ pipeline {
             }
         }
 
-        /*************** 3. COMPILATION & TESTS ***************/
+        /*************** 3. BUILD & TEST ***************/
         stage('Build & Test') {
             steps {
                 sh 'mvn clean compile test'
             }
         }
+
         stage('JaCoCo Report') {
             steps {
                 sh 'mvn jacoco:report'
@@ -71,7 +72,7 @@ pipeline {
             }
         }
 
-        /*************** 4. SAST - SCAN CODE SOURCE ***************/
+        /*************** 4. SAST - SONARQUBE ***************/
         stage('SAST - SonarQube Analysis') {
             steps {
                 script {
@@ -85,6 +86,7 @@ pipeline {
                 }
             }
         }
+
         stage('Security Scan: Nmap') {
             steps {
                 script {
@@ -94,7 +96,7 @@ pipeline {
             }
         }
 
-        /*************** 5. SCA - DEPENDENCY SCAN ***************/
+        /*************** 5. SCA - DEPENDENCY CHECK ***************/
         stage('SCA - Dependency Check') {
             steps {
                 script {
@@ -118,79 +120,58 @@ pipeline {
                 script {
                     sh '''
                     echo "Téléchargement et exécution de Gitleaks..."
-
                     rm -f gitleaks gitleaks.tar.gz
 
-                    echo "Téléchargement de Gitleaks..."
-                    curl -L -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz
-
-                    if ! file gitleaks.tar.gz | grep -q "gzip compressed data"; then
-                        echo "ERREUR: le fichier téléchargé n'est pas valide."
-                        cat gitleaks.tar.gz | head -n 20
-                        exit 1
-                    fi
-
-                    echo "Extraction de Gitleaks..."
+                    curl -L -o gitleaks.tar.gz ${GITLEAKS_URL}
                     tar -xzf gitleaks.tar.gz
+                    chmod +x gitleaks || mv gitleaks_*_linux_x64/gitleaks ./gitleaks
 
-                    if [ -f ./gitleaks ]; then
-                        chmod +x gitleaks
-                    elif [ -f ./gitleaks_8.18.4_linux_x64/gitleaks ]; then
-                        mv ./gitleaks_8.18.4_linux_x64/gitleaks .
-                        chmod +x gitleaks
-                    else
-                        echo "ERREUR: binaire gitleaks introuvable."
-                        exit 1
-                    fi
-
-                    ./gitleaks version
                     ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
-
                     echo "✅ Rapport Gitleaks généré : gitleaks-report.json"
                     '''
                 }
             }
         }
-         stage('Deploy to Nexus') {
+
+        /*************** 7. DEPLOY TO NEXUS ***************/
+        stage('Deploy to Nexus') {
             steps {
                 sh 'mvn deploy -DskipTests -DaltDeploymentRepository=deploymentRepo::default::http://192.168.33.10:8081/repository/maven-releases/'
             }
         }
-       
 
-       
+        /*************** 8. DOCKER BUILD & SCAN ***************/
+        stage('Docker Build & Scan') {
+            steps {
+                script {
+                    sh '''
+                    IMAGE_NAME="nizar101/gestion-station-ski:1.0.0"
 
-        /*************** 7. DOCKER IMAGE BUILD & SCAN ***************/
-       stage('Docker Build & Scan') {
-    steps {
-        script {
-            sh '''
-            IMAGE_NAME="nizar101/gestion-station-ski:1.0.0"
+                    echo "Construction de l'image Docker..."
+                    docker build -t $IMAGE_NAME .
 
-            echo "Construction de l'image Docker..."
-            docker build -t $IMAGE_NAME .
+                    echo "Scan de l'image avec Trivy..."
+                    if ! command -v trivy &> /dev/null; then
+                        echo "Installation de Trivy..."
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+                        chmod +x ./bin/trivy
+                    fi
 
-            echo "Scan de l'image avec Trivy..."
-            if ! command -v trivy &> /dev/null; then
-                echo "Installation de Trivy..."
-                curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
-                chmod +x ./bin/trivy
-            fi
+                    ./bin/trivy image --timeout 20m \
+                        --exit-code 0 \
+                        --severity MEDIUM,HIGH,CRITICAL \
+                        --format json \
+                        --output trivy-report.json \
+                        $IMAGE_NAME
 
-            echo "Exécution du scan avec Trivy (avec timeout augmenté)..."
-            ./bin/trivy image --timeout 20m \
-                --exit-code 0 \
-                --severity MEDIUM,HIGH,CRITICAL \
-                --format json \
-                --output trivy-report.json \
-                $IMAGE_NAME
-
-            echo "Rapport Trivy généré : trivy-report.json"
-            '''
+                    echo "Rapport Trivy généré : trivy-report.json"
+                    '''
+                }
+            }
         }
-    }
-}
-         stage('Deploy image') {
+
+        /*************** 9. DEPLOY IMAGE ***************/
+        stage('Deploy image') {
             steps {
                 withCredentials([string(credentialsId: 'dockerhub-jenkins-token', variable: 'dockerhub_token')]) {
                     sh "docker login -u nizar101 -p ${dockerhub_token}"
@@ -198,15 +179,16 @@ pipeline {
                 }
             }
         }
+
+        /*************** 10. MONITORING ***************/
         stage('Start Monitoring Containers') {
             steps {
-                sh 'docker start 489d14dd8ed7'
-                sh 'docker start a8bb77026230'
+                sh 'docker start 489d14dd8ed7 || true'
+                sh 'docker start a8bb77026230 || true'
             }
         }
 
-
-        /*************** 8. DAST - SCAN AVEC OWASP ZAP ***************/
+        /*************** 11. DAST - OWASP ZAP ***************/
         stage('DAST - OWASP ZAP Scan') {
             steps {
                 script {
@@ -215,92 +197,55 @@ pipeline {
                     docker run --rm -v $(pwd):/zap/wrk/:rw \
                         owasp/zap2docker-stable zap-baseline.py \
                         -t http://localhost:8080 -r zap-report.html || true
-
-                    echo "Rapport ZAP généré : zap-report.html"
                     '''
                 }
             }
         }
+
+        /*************** 12. EMAIL NOTIFICATION ***************/
+        stage('Email Notification') {
+            steps {
+                mail bcc: '',
+                     body: '''
+Final Report: The pipeline has completed successfully. No action required.
+''',
+                     cc: '',
+                     from: '',
+                     replyTo: '',
+                     subject: 'Succès de la pipeline DevOps Project',
+                     to: 'nizartlili482@gmail.com'
+            }
+        }
     }
 
-    /*************** 9. PUBLICATION DES RAPPORTS ***************/
+    /*************** 13. POST-BUILD ACTIONS ***************/
     post {
+        success {
+            script {
+                emailext(
+                    subject: "Build Success: ${currentBuild.fullDisplayName}",
+                    body: "✅ Le build a réussi ! Consultez les détails à ${env.BUILD_URL}",
+                    to: 'nizartlili482@gmail.com'
+                )
+            }
+        }
+        failure {
+            script {
+                emailext(
+                    subject: "❌ Build Failure: ${currentBuild.fullDisplayName}",
+                    body: "Le build a échoué ! Vérifiez les détails à ${env.BUILD_URL}",
+                    to: 'nizartlili482@gmail.com'
+                )
+            }
+        }
         always {
-            echo "📦 Publication des rapports de sécurité..."
-
-            // 1️⃣ Rapport OWASP Dependency-Check
-            publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'target',
-                reportFiles: 'dependency-check-report.html',
-                reportName: 'OWASP Dependency-Check Report'
-            ])
-
-            // 2️⃣ Rapport OWASP ZAP
-            publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: '.',
-                reportFiles: 'zap-report.html',
-                reportName: 'OWASP ZAP DAST Report'
-            ])
-
-            // 3️⃣ Rapport Gitleaks
             script {
-                sh '''
-                if [ -f gitleaks-report.json ]; then
-                    echo "🧩 Conversion du rapport Gitleaks JSON -> HTML..."
-                    {
-                        echo "<html><head><title>Gitleaks Secrets Scan Report</title>"
-                        echo "<style>body { font-family: monospace; white-space: pre-wrap; background: #f9f9f9; padding: 20px; }</style>"
-                        echo "</head><body><h2>Rapport Gitleaks</h2><hr><pre>"
-                        jq . gitleaks-report.json || cat gitleaks-report.json
-                        echo "</pre></body></html>"
-                    } > gitleaks-report.html
-                else
-                    echo "⚠️ Aucun rapport Gitleaks trouvé, skip."
-                fi
-                '''
+                emailext(
+                    subject: "ℹ️ Build Notification: ${currentBuild.fullDisplayName}",
+                    body: "Consultez les détails du build à ${env.BUILD_URL}",
+                    to: 'nizartlili482@gmail.com'
+                )
             }
-
-            publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: '.',
-                reportFiles: 'gitleaks-report.html',
-                reportName: 'Gitleaks Secrets Scan Report'
-            ])
-
-            // 4️⃣ Rapport Trivy (optionnel : JSON converti en HTML)
-            script {
-                sh '''
-                if [ -f trivy-report.json ]; then
-                    echo "🧩 Conversion du rapport Trivy JSON -> HTML..."
-                    {
-                        echo "<html><head><title>Trivy Docker Image Scan Report</title>"
-                        echo "<style>body { font-family: monospace; white-space: pre-wrap; background: #eef; padding: 20px; }</style>"
-                        echo "</head><body><h2>Rapport Trivy</h2><hr><pre>"
-                        jq . trivy-report.json || cat trivy-report.json
-                        echo "</pre></body></html>"
-                    } > trivy-report.html
-                fi
-                '''
-            }
-
-            publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: '.',
-                reportFiles: 'trivy-report.html',
-                reportName: 'Trivy Docker Image Scan Report'
-            ])
-
-            echo "✅ Tous les rapports ont été publiés avec succès."
         }
     }
 }
