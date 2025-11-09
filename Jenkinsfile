@@ -85,6 +85,14 @@ pipeline {
                 }
             }
         }
+        stage('Security Scan: Nmap') {
+            steps {
+                script {
+                    echo "Starting Nmap Security Scan..."
+                    sh 'sudo nmap -sS -p 1-65535 -v localhost'
+                }
+            }
+        }
 
         /*************** 5. SCA - DEPENDENCY SCAN ***************/
         stage('SCA - Dependency Check') {
