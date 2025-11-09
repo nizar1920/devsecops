@@ -91,7 +91,7 @@ pipeline {
             steps {
                 script {
                     echo "Starting Nmap Security Scan..."
-                    sh 'sudo nmap -sS -p 1-65535 -v localhost'
+                    sh 'nmap -sS -p 1-65535 -v localhost'
                 }
             }
         }
