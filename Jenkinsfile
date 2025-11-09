@@ -21,7 +21,7 @@ pipeline {
             }
         }
 
-        /*************** 2. SECURITE DEVELOPPEUR ***************/
+        /*************** 2. SECURITE DEVELOPPEUR ******************/
         stage('Pre-commit Security Hooks') {
             steps {
                 script {
