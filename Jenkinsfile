@@ -148,28 +148,19 @@ pipeline {
                 sh 'mvn deploy -DskipTests -DaltDeploymentRepository=deploymentRepo::default::http://192.168.33.10:8081/repository/maven-releases/'
             }
         }
-        stage('Building image') {
-            steps {
-                sh 'docker build -t nizar101/gestion-station-ski:1.0.0 .'
-            }
-        }
+       
 
-        stage('Deploy image') {
-            steps {
-                withCredentials([string(credentialsId: 'dockerhub-jenkins-token', variable: 'dockerhub_token')]) {
-                    sh "docker login -u nizar101 -p ${dockerhub_token}"
-                    sh 'docker push nizar101/gestion-station-ski:1.0.0'
-                }
-            }
-        }
+       
 
         /*************** 7. DOCKER IMAGE BUILD & SCAN ***************/
        stage('Docker Build & Scan') {
     steps {
         script {
             sh '''
+            IMAGE_NAME="nizar101/gestion-station-ski:1.0.0"
+
             echo "Construction de l'image Docker..."
-            docker build -t devsecops-app .
+            docker build -t $IMAGE_NAME .
 
             echo "Scan de l'image avec Trivy..."
             if ! command -v trivy &> /dev/null; then
@@ -184,13 +175,21 @@ pipeline {
                 --severity MEDIUM,HIGH,CRITICAL \
                 --format json \
                 --output trivy-report.json \
-                devsecops-app
+                $IMAGE_NAME
 
             echo "Rapport Trivy généré : trivy-report.json"
             '''
         }
     }
 }
+         stage('Deploy image') {
+            steps {
+                withCredentials([string(credentialsId: 'dockerhub-jenkins-token', variable: 'dockerhub_token')]) {
+                    sh "docker login -u nizar101 -p ${dockerhub_token}"
+                    sh 'docker push nizar101/gestion-station-ski:1.0.0'
+                }
+            }
+        }
         stage('Start Monitoring Containers') {
             steps {
                 sh 'docker start 489d14dd8ed7'
