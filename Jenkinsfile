@@ -112,10 +112,19 @@ pipeline {
                     curl -L -o gitleaks.tar.gz ${GITLEAKS_URL}
                     tar -xzf gitleaks.tar.gz
                     chmod +x gitleaks || mv gitleaks_*_linux_x64/gitleaks ./gitleaks
-                    ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
-                    echo "Rapport Gitleaks généré : gitleaks-report.json"
+                    ./gitleaks detect --source . --no-git --report-format html --report-path gitleaks-report.html || true
+                    echo "Rapport Gitleaks généré : gitleaks-report.html"
                     '''
                 }
+                // Publier le rapport HTML
+                publishHTML(target: [
+                    allowMissing: false,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: '.',                  // Le rapport est généré dans le workspace
+                    reportFiles: 'gitleaks-report.html',
+                    reportName: 'Gitleaks Report'
+                ])
             }
         }
 
@@ -134,12 +143,21 @@ pipeline {
                     ./bin/trivy image --timeout 20m \
                         --exit-code 0 \
                         --severity MEDIUM,HIGH,CRITICAL \
-                        --format json \
-                        --output trivy-report.json \
+                        --format html \
+                        --output trivy-report.html \
                         $IMAGE_NAME
-                    echo "Rapport Trivy généré : trivy-report.json"
+                    echo "Rapport Trivy généré : trivy-report.html"
                     '''
                 }
+                // Publier le rapport HTML Trivy
+                publishHTML(target: [
+                    allowMissing: false,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: '.',                  
+                    reportFiles: 'trivy-report.html',
+                    reportName: 'Trivy Report'
+                ])
             }
         }
 
@@ -227,3 +245,4 @@ Final Report: The pipeline has completed successfully. No action required.
         }
     }
 }
+
