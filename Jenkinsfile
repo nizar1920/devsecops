@@ -14,33 +14,28 @@ pipeline {
 
     stages {
 
-        /*************** 1. CLONAGE DU REPO ***************/
+        /*************** DEVELOPMENT PHASE ***************/
+        // Cette phase couvre le développement et la qualité côté développeur
         stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/nizar1920/devsecops.git'
             }
         }
 
-        /*************** 2. SECURITE DEVELOPPEUR ******************/
         stage('Pre-commit Security Hooks') {
             steps {
                 script {
                     sh '''
                     echo "Installation et exécution des hooks de sécurité (pre-commit)..."
-
                     if ! dpkg -s python3-venv >/dev/null 2>&1; then
-                        echo "Installation du module python3-venv..."
                         sudo apt update && sudo apt install -y python3-venv python3-pip
                     fi
-
                     git config --unset-all core.hooksPath || true
-
                     if ! command -v pre-commit &> /dev/null; then
                         python3 -m venv venv
                         . venv/bin/activate
                         pip install pre-commit
                     fi
-
                     pre-commit install
                     pre-commit run --all-files || true
                     '''
@@ -48,7 +43,6 @@ pipeline {
             }
         }
 
-        /*************** 3. BUILD & TEST ***************/
         stage('Build & Test') {
             steps {
                 sh 'mvn clean compile test'
@@ -72,7 +66,8 @@ pipeline {
             }
         }
 
-        /*************** 4. SAST - SONARQUBE ***************/
+        /*************** ACCEPTANCE PHASE ***************/
+        // Cette phase couvre les contrôles qualité, SAST, SCA, secrets et scans Docker
         stage('SAST - SonarQube Analysis') {
             steps {
                 script {
@@ -87,10 +82,6 @@ pipeline {
             }
         }
 
-     
-
-
-        /*************** 5. SCA - DEPENDENCY CHECK ***************/
         stage('SCA - Dependency Check') {
             steps {
                 script {
@@ -108,63 +99,54 @@ pipeline {
             }
         }
 
-        /*************** 6. SECRETS SCAN - GITLEAKS ***************/
         stage('Secrets Scan - Gitleaks') {
             steps {
                 script {
                     sh '''
                     echo "Téléchargement et exécution de Gitleaks..."
                     rm -f gitleaks gitleaks.tar.gz
-
                     curl -L -o gitleaks.tar.gz ${GITLEAKS_URL}
                     tar -xzf gitleaks.tar.gz
                     chmod +x gitleaks || mv gitleaks_*_linux_x64/gitleaks ./gitleaks
-
                     ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
-                    echo "✅ Rapport Gitleaks généré : gitleaks-report.json"
+                    echo " Rapport Gitleaks généré : gitleaks-report.json"
                     '''
                 }
             }
         }
 
-        /*************** 7. DEPLOY TO NEXUS ***************/
-        stage('Deploy to Nexus') {
-            steps {
-                sh 'mvn deploy -DskipTests -DaltDeploymentRepository=deploymentRepo::default::http://192.168.33.10:8081/repository/maven-releases/'
-            }
-        }
-
-        /*************** 8. DOCKER BUILD & SCAN ***************/
         stage('Docker Build & Scan') {
             steps {
                 script {
                     sh '''
                     IMAGE_NAME="nizar101/gestion-station-ski:1.0.0"
-
                     echo "Construction de l'image Docker..."
                     docker build -t $IMAGE_NAME .
-
                     echo "Scan de l'image avec Trivy..."
                     if ! command -v trivy &> /dev/null; then
-                        echo "Installation de Trivy..."
                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
                         chmod +x ./bin/trivy
                     fi
-
                     ./bin/trivy image --timeout 20m \
                         --exit-code 0 \
                         --severity MEDIUM,HIGH,CRITICAL \
                         --format json \
                         --output trivy-report.json \
                         $IMAGE_NAME
-
                     echo "Rapport Trivy généré : trivy-report.json"
                     '''
                 }
             }
         }
 
-        /*************** 9. DEPLOY IMAGE ***************/
+        /*************** PRODUCTION PHASE ***************/
+        // Cette phase couvre le déploiement Maven et Docker
+        stage('Deploy to Nexus') {
+            steps {
+                sh 'mvn deploy -DskipTests -DaltDeploymentRepository=deploymentRepo::default::http://192.168.33.10:8081/repository/maven-releases/'
+            }
+        }
+
         stage('Deploy image') {
             steps {
                 withCredentials([string(credentialsId: 'dockerhub-jenkins-token', variable: 'dockerhub_token')]) {
@@ -174,15 +156,8 @@ pipeline {
             }
         }
 
-        /*************** 10. MONITORING ***************/
-        stage('Start Monitoring Containers') {
-            steps {
-                sh 'docker start 489d14dd8ed7 || true'
-                sh 'docker start a8bb77026230 || true'
-            }
-        }
-
-        /*************** 11. DAST - OWASP ZAP ***************/
+        /*************** ACCEPTANCE / QA PHASE POST-DEPLOY ***************/
+        // DAST pour tester la version déployée
         stage('DAST - OWASP ZAP Scan') {
             steps {
                 script {
@@ -196,7 +171,15 @@ pipeline {
             }
         }
 
-        /*************** 12. EMAIL NOTIFICATION ***************/
+        /*************** OPERATIONS PHASE ***************/
+        // Monitoring et alertes
+        stage('Start Monitoring Containers') {
+            steps {
+                sh 'docker start 489d14dd8ed7 || true'
+                sh 'docker start a8bb77026230 || true'
+            }
+        }
+
         stage('Email Notification') {
             steps {
                 mail bcc: '',
@@ -212,13 +195,13 @@ Final Report: The pipeline has completed successfully. No action required.
         }
     }
 
-    /*************** 13. POST-BUILD ACTIONS ***************/
+    /*************** POST-BUILD ACTIONS ***************/
     post {
         success {
             script {
                 emailext(
                     subject: "Build Success: ${currentBuild.fullDisplayName}",
-                    body: "✅ Le build a réussi ! Consultez les détails à ${env.BUILD_URL}",
+                    body: " Le build a réussi ! Consultez les détails à ${env.BUILD_URL}",
                     to: 'nizartlili482@gmail.com'
                 )
             }
@@ -226,7 +209,7 @@ Final Report: The pipeline has completed successfully. No action required.
         failure {
             script {
                 emailext(
-                    subject: "❌ Build Failure: ${currentBuild.fullDisplayName}",
+                    subject: " Build Failure: ${currentBuild.fullDisplayName}",
                     body: "Le build a échoué ! Vérifiez les détails à ${env.BUILD_URL}",
                     to: 'nizartlili482@gmail.com'
                 )
@@ -235,7 +218,7 @@ Final Report: The pipeline has completed successfully. No action required.
         always {
             script {
                 emailext(
-                    subject: "ℹ️ Build Notification: ${currentBuild.fullDisplayName}",
+                    subject: " Build Notification: ${currentBuild.fullDisplayName}",
                     body: "Consultez les détails du build à ${env.BUILD_URL}",
                     to: 'nizartlili482@gmail.com'
                 )
