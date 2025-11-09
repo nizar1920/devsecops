@@ -10,6 +10,7 @@ pipeline {
         SONAR_HOST_URL = 'http://192.168.33.10:9000/'
         SONAR_AUTH_TOKEN = credentials('sonarqube')
         GITLEAKS_URL = 'https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz'
+        IMAGE_NAME = 'nizar101/gestion-station-ski:1.0.0'
     }
 
     stages {
@@ -112,18 +113,25 @@ pipeline {
                     curl -L -o gitleaks.tar.gz ${GITLEAKS_URL}
                     tar -xzf gitleaks.tar.gz
                     chmod +x gitleaks || mv gitleaks_*_linux_x64/gitleaks ./gitleaks
-                    ./gitleaks detect --source . --no-git --report-format html --report-path gitleaks-report.html || true
-                    echo "Rapport Gitleaks généré : gitleaks-report.html"
+
+                    # Exécuter le scan Gitleaks et générer un rapport JSON
+                    ./gitleaks detect \
+                        --source . \
+                        --no-git \
+                        --report-format json \
+                        --report-path gitleaks-report.json \
+                        --no-banner || true
+
+                    echo "Rapport Gitleaks généré : gitleaks-report.json"
                     '''
                 }
-                // Publier le rapport HTML
                 publishHTML(target: [
                     allowMissing: false,
                     alwaysLinkToLastBuild: true,
                     keepAll: true,
-                    reportDir: '.',                  // Le rapport est généré dans le workspace
-                    reportFiles: 'gitleaks-report.html',
-                    reportName: 'Gitleaks Report'
+                    reportDir: '.',                  
+                    reportFiles: 'gitleaks-report.json',
+                    reportName: 'Gitleaks JSON Report'
                 ])
             }
         }
@@ -132,24 +140,32 @@ pipeline {
             steps {
                 script {
                     sh '''
-                    IMAGE_NAME="nizar101/gestion-station-ski:1.0.0"
                     echo "Construction de l'image Docker..."
                     docker build -t $IMAGE_NAME .
+
                     echo "Scan de l'image avec Trivy..."
                     if ! command -v trivy &> /dev/null; then
                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
                         chmod +x ./bin/trivy
                     fi
-                    ./bin/trivy image --timeout 20m \
+
+                    # Télécharger le template HTML officiel
+                    mkdir -p contrib
+                    curl -sL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -o contrib/html.tpl
+
+                    # Scanner l'image avec un template HTML
+                    ./bin/trivy image \
+                        --timeout 20m \
                         --exit-code 0 \
                         --severity MEDIUM,HIGH,CRITICAL \
-                        --format html \
+                        --format template \
+                        --template "@contrib/html.tpl" \
                         --output trivy-report.html \
                         $IMAGE_NAME
+
                     echo "Rapport Trivy généré : trivy-report.html"
                     '''
                 }
-                // Publier le rapport HTML Trivy
                 publishHTML(target: [
                     allowMissing: false,
                     alwaysLinkToLastBuild: true,
@@ -172,7 +188,7 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'dockerhub-jenkins-token', variable: 'dockerhub_token')]) {
                     sh "docker login -u nizar101 -p ${dockerhub_token}"
-                    sh 'docker push nizar101/gestion-station-ski:1.0.0'
+                    sh "docker push ${IMAGE_NAME}"
                 }
             }
         }
@@ -220,7 +236,7 @@ Final Report: The pipeline has completed successfully. No action required.
             script {
                 emailext(
                     subject: "Build Success: ${currentBuild.fullDisplayName}",
-                    body: " Le build a réussi ! Consultez les détails à ${env.BUILD_URL}",
+                    body: "Le build a réussi ! Consultez les détails à ${env.BUILD_URL}",
                     to: 'nizartlili482@gmail.com'
                 )
             }
@@ -228,7 +244,7 @@ Final Report: The pipeline has completed successfully. No action required.
         failure {
             script {
                 emailext(
-                    subject: " Build Failure: ${currentBuild.fullDisplayName}",
+                    subject: "Build Failure: ${currentBuild.fullDisplayName}",
                     body: "Le build a échoué ! Vérifiez les détails à ${env.BUILD_URL}",
                     to: 'nizartlili482@gmail.com'
                 )
@@ -237,7 +253,7 @@ Final Report: The pipeline has completed successfully. No action required.
         always {
             script {
                 emailext(
-                    subject: " Build Notification: ${currentBuild.fullDisplayName}",
+                    subject: "Build Notification: ${currentBuild.fullDisplayName}",
                     body: "Consultez les détails du build à ${env.BUILD_URL}",
                     to: 'nizartlili482@gmail.com'
                 )
@@ -245,4 +261,3 @@ Final Report: The pipeline has completed successfully. No action required.
         }
     }
 }
-
