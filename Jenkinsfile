@@ -15,7 +15,6 @@ pipeline {
     stages {
 
         /*************** DEVELOPMENT PHASE ***************/
-        // Cette phase couvre le développement et la qualité côté développeur
         stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/nizar1920/devsecops.git'
@@ -43,9 +42,15 @@ pipeline {
             }
         }
 
-        stage('Build & Test') {
+        stage('Build, Test & Package') {
             steps {
-                sh 'mvn clean compile test'
+                sh 'mvn clean package'
+            }
+        }
+
+        stage('Verify JAR') {
+            steps {
+                sh 'ls -l target/gestion-station-ski-1.0.jar'
             }
         }
 
@@ -66,8 +71,7 @@ pipeline {
             }
         }
 
-        /*************** ACCEPTANCE PHASE ***************/
-        // Cette phase couvre les contrôles qualité, SAST, SCA, secrets et scans Docker
+        /*************** ACCEPTANCE / QA PHASE ***************/
         stage('SAST - SonarQube Analysis') {
             steps {
                 script {
@@ -109,7 +113,7 @@ pipeline {
                     tar -xzf gitleaks.tar.gz
                     chmod +x gitleaks || mv gitleaks_*_linux_x64/gitleaks ./gitleaks
                     ./gitleaks detect --source . --no-git --report-format json --report-path gitleaks-report.json || true
-                    echo " Rapport Gitleaks généré : gitleaks-report.json"
+                    echo "Rapport Gitleaks généré : gitleaks-report.json"
                     '''
                 }
             }
@@ -140,14 +144,13 @@ pipeline {
         }
 
         /*************** PRODUCTION PHASE ***************/
-        // Cette phase couvre le déploiement Maven et Docker
         stage('Deploy to Nexus') {
             steps {
                 sh 'mvn deploy -DskipTests -DaltDeploymentRepository=deploymentRepo::default::http://192.168.33.10:8081/repository/maven-releases/'
             }
         }
 
-        stage('Deploy image') {
+        stage('Deploy Docker Image') {
             steps {
                 withCredentials([string(credentialsId: 'dockerhub-jenkins-token', variable: 'dockerhub_token')]) {
                     sh "docker login -u nizar101 -p ${dockerhub_token}"
@@ -156,8 +159,7 @@ pipeline {
             }
         }
 
-        /*************** ACCEPTANCE / QA PHASE POST-DEPLOY ***************/
-        // DAST pour tester la version déployée
+        /*************** ACCEPTANCE / QA POST-DEPLOY ***************/
         stage('DAST - OWASP ZAP Scan') {
             steps {
                 script {
@@ -172,7 +174,6 @@ pipeline {
         }
 
         /*************** OPERATIONS PHASE ***************/
-        // Monitoring et alertes
         stage('Start Monitoring Containers') {
             steps {
                 sh 'docker start 489d14dd8ed7 || true'
